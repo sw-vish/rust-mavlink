@@ -18,6 +18,8 @@ use quote::{format_ident, quote};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "serde")]
+use serde_repr::Deserialize_repr;
 
 use crate::error::BindGenError;
 use crate::util;
@@ -219,6 +221,8 @@ impl MavProfile {
 
             #[cfg(feature = "serde")]
             use serde::{Serialize, Deserialize};
+            #[cfg(feature = "serde")]
+            use serde_repr::Deserialize_repr;
 
             #[cfg(feature = "arbitrary")]
             use arbitrary::Arbitrary;
@@ -261,7 +265,8 @@ impl MavProfile {
         structs: &[TokenStream],
     ) -> TokenStream {
         quote! {
-            #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+            #[cfg_attr(feature = "serde", derive(Serialize, Deserialize, ts_rs::TS))]
+            #[cfg_attr(feature = "serde", ts(export))]
             #[cfg_attr(feature = "serde", serde(tag = "type"))]
             #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
             #[repr(u32)]
@@ -597,7 +602,9 @@ impl MavEnum {
             let primitive = format_ident!("{}", primitive);
             enum_def = quote! {
                 bitflags!{
-                    #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+                    #[cfg_attr(feature = "serde", derive(Serialize, ts_rs::TS))]
+                    #[cfg_attr(feature = "serde", ts(export))]
+                    #[cfg_attr(feature = "serde", ts(type = "string"))]
                     #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
                     #[derive(Debug, Copy, Clone, PartialEq)]
                     #deprecated
@@ -606,12 +613,22 @@ impl MavEnum {
                         #(#defs)*
                     }
                 }
+
+                impl<'de> Deserialize<'de> for #enum_name {
+                    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+                    where
+                        D: serde::Deserializer<'de>,
+                    {
+                        let bits = #primitive::deserialize(deserializer)?;
+                        Ok(#enum_name::from_bits_truncate(bits)) // Ignores invalid bits
+                    }
+                }
             };
         } else {
             enum_def = quote! {
                 #[derive(Debug, Copy, Clone, PartialEq, FromPrimitive, ToPrimitive)]
-                #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-                #[cfg_attr(feature = "serde", serde(tag = "type"))]
+                #[cfg_attr(feature = "serde", derive(Serialize, Deserialize_repr, ts_rs::TS))]
+                #[cfg_attr(feature = "serde", ts(export))]
                 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
                 #[repr(u32)]
                 #deprecated
@@ -707,10 +724,17 @@ impl MavMessage {
                     quote!()
                 };
 
+                let ts_as_attr = if matches!(field.mavtype, MavType::Array(_, _)) {
+                    quote!(#[cfg_attr(feature = "serde", ts(type = "Array<number>"))])
+                } else {
+                    quote!()
+                };
+
                 quote! {
                     #description
                     #serde_default
                     #serde_with_attr
+                    #ts_as_attr
                     #nametype
                 }
             })
@@ -859,7 +883,8 @@ impl MavMessage {
             #deprecation
             #description
             #[derive(Debug, Clone, PartialEq)]
-            #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+            #[cfg_attr(feature = "serde", derive(Serialize, Deserialize, ts_rs::TS))]
+            #[cfg_attr(feature = "serde", ts(export))]
             #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
             pub struct #msg_name {
                 #(#name_types)*
